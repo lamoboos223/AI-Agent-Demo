@@ -16,12 +16,19 @@ os.environ["GROQ_API_KEY"] = "******"
 
 # Define tools
 @tool
-def make_http_call(service_name: str) -> int:
+def make_http_call(input: dict) -> tuple:
     """Make a http call to the service.
 
     Args:
-        service_name: name of the service to call from services.csv
+        input: dictionary containing service_name and any additional parameters
     """
+    service_name = input.get("service_name")
+    if not service_name:
+        return "Error: service_name is required"
+
+    # Get all parameters except service_name
+    kwargs = {k: v for k, v in input.items() if k != "service_name"}
+
     df = pd.read_csv("./src/services.csv", skipinitialspace=True)
     matching_services = df[df["service_name"] == service_name]
     if matching_services.empty:
@@ -30,8 +37,30 @@ def make_http_call(service_name: str) -> int:
 
     service_row = matching_services.iloc[0]
     service_url = service_row["service_url"]
-    response = requests.post(service_url, service_row["service_payload"])
-    return response.status_code, "response.json()"
+
+    # Parse the parameters string
+    try:
+        required_params = json.loads(service_row["parameters"].replace("'", '"'))
+    except json.JSONDecodeError:
+        required_params = [
+            p.strip() for p in service_row["parameters"].strip("[]").split(",")
+        ]
+
+    print(f"Required parameters: {required_params}")
+    print(f"Provided parameters: {kwargs}")
+
+    # Parse the original payload
+    payload = json.loads(service_row["service_payload"])
+
+    # Update payload with provided parameters
+    for param in required_params:
+        if param in kwargs:
+            payload[param] = kwargs[param]
+
+    print(f"Final payload: {payload}")
+    response = requests.post(service_url, json=payload)
+
+    return (response.status_code, "response.text")
 
 
 # Augment the LLM with tools
@@ -45,8 +74,14 @@ llm_with_tools = llm.bind_tools(tools)
 def llm_call(state: MessagesState):
     """LLM decides whether to call a tool or not"""
     df = pd.read_csv("./src/services.csv", skipinitialspace=True)
+
+    # Create service descriptions with their parameters
     services_list = "\n".join(
-        [f"- {row['service_name']}: {row['description']}" for _, row in df.iterrows()]
+        [
+            f"- {row['service_name']}: {row['description']} "
+            f"(Required parameters: {row['parameters']})"
+            for _, row in df.iterrows()
+        ]
     )
 
     return {
@@ -58,7 +93,16 @@ def llm_call(state: MessagesState):
                                     Available services are:
                                     {services_list}
 
-                                    Always choose the most specific and appropriate service for the situation."""
+                                    Always choose the most specific and appropriate service for the situation.
+                                    For each service call, you MUST extract the required parameters from the user's message
+                                    and include them in your service call.
+                                    
+                                    For example, if a user says "I need medical help in Riyadh", you should:
+                                    1. Identify the appropriate service (hospital_service)
+                                    2. Extract the location parameter (Riyadh)
+                                    3. Include it in your service call
+
+                                    Make sure to extract and include ALL required parameters listed for each service."""
                     )
                 ]
                 + state["messages"]
@@ -69,12 +113,23 @@ def llm_call(state: MessagesState):
 
 def tool_node(state: dict):
     """Performs the tool call"""
-
     result = []
     for tool_call in state["messages"][-1].tool_calls:
         tool = tools_by_name[tool_call["name"]]
-        service_name = tool_call["args"].get("service_name", "unknown service")
-        status_code, response_json = tool.invoke(tool_call["args"])
+        args = tool_call["args"]
+        print(f"tool_call: {tool_call}")
+
+        # Package all arguments into a single input dictionary
+        input_dict = {
+            "service_name": args.get("service_name"),
+            **{k: v for k, v in args.items() if k != "service_name"},
+        }
+
+        print(f"Calling service with input: {input_dict}")
+
+        # Call the tool with the input dictionary
+        status_code, response_json = tool.invoke(input=input_dict)
+
         result.append(
             ToolMessage(
                 content="##### Calling Service:",
@@ -82,14 +137,19 @@ def tool_node(state: dict):
             )
         )
         result.append(
-            ToolMessage(content=f"**{service_name}**", tool_call_id=tool_call["id"])
+            ToolMessage(
+                content=f"**{args['input']['service_name']}**",
+                tool_call_id=tool_call["id"],
+            )
         )
-        result.append(ToolMessage(content=status_code, tool_call_id=tool_call["id"]))
+        result.append(
+            ToolMessage(content=str(status_code), tool_call_id=tool_call["id"])
+        )
         result.append(
             ToolMessage(content="##### Response:", tool_call_id=tool_call["id"])
         )
         result.append(
-            ToolMessage(content=f"{response_json}", tool_call_id=tool_call["id"])
+            ToolMessage(content=str(response_json), tool_call_id=tool_call["id"])
         )
 
     return {"messages": result}
