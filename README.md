@@ -37,5 +37,5 @@ or if you are windows user just run this command as admin `choco install graphvi
 ### Run Streamlit for GUI Chat With AI Agent
 
 ```sh
-streamlit run src/app.py
+streamlit run src/app.py # or poetry run start
 ```

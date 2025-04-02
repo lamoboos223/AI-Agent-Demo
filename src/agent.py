@@ -46,9 +46,6 @@ def make_http_call(input: dict) -> tuple:
             p.strip() for p in service_row["parameters"].strip("[]").split(",")
         ]
 
-    print(f"Required parameters: {required_params}")
-    print(f"Provided parameters: {kwargs}")
-
     # Parse the original payload
     payload = json.loads(service_row["service_payload"])
 
@@ -57,10 +54,9 @@ def make_http_call(input: dict) -> tuple:
         if param in kwargs:
             payload[param] = kwargs[param]
 
-    print(f"Final payload: {payload}")
     response = requests.post(service_url, json=payload)
 
-    return (response.status_code, "response.text")
+    return (response.status_code, "This is hardcoded response for testing purposes")
 
 
 # Augment the LLM with tools
@@ -102,7 +98,7 @@ def llm_call(state: MessagesState):
                                     2. Extract the location parameter (Riyadh)
                                     3. Include it in your service call
 
-                                    Make sure to extract and include ALL required parameters listed for each service."""
+                                    Make sure to extract and include ALL required parameters listed for each service, if any."""
                     )
                 ]
                 + state["messages"]
@@ -117,18 +113,16 @@ def tool_node(state: dict):
     for tool_call in state["messages"][-1].tool_calls:
         tool = tools_by_name[tool_call["name"]]
         args = tool_call["args"]
-        print(f"tool_call: {tool_call}")
-
-        # Package all arguments into a single input dictionary
+        # Create the input dictionary correctly
         input_dict = {
-            "service_name": args.get("service_name"),
-            **{k: v for k, v in args.items() if k != "service_name"},
+            "input": {  # Add this wrapper level
+                "service_name": args.get("service_name"),
+                **{k: v for k, v in args.items() if k != "service_name"},
+            }
         }
 
-        print(f"Calling service with input: {input_dict}")
-
-        # Call the tool with the input dictionary
-        status_code, response_json = tool.invoke(input=input_dict)
+        # Call the tool with the correctly structured input
+        status_code, response_json = tool.invoke(**input_dict)  # Use ** to unpack
 
         result.append(
             ToolMessage(
