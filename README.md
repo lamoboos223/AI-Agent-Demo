@@ -34,6 +34,9 @@ or if you are windows user just run this command as admin `choco install graphvi
 
 ![Agent Graph](./agent_workflow.png)
 
+![image](https://github.com/user-attachments/assets/a62e8233-cb6c-4a97-9750-f829c1a77af8)
+
+
 ### Run Streamlit for GUI Chat With AI Agent
 
 ```sh
